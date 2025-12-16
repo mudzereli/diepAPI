@@ -167,10 +167,15 @@ class EntityManager extends Extension {
 
   #squareHook(): void {
     CanvasKit.hookPolygon(4, (vertices, ctx) => {
+      // Calculate radius in CANVAS space first
+      const radiusCanvas = Math.round(Vector.radius(...vertices));
+      
+      // Convert vertices to arena positions
       vertices = vertices.map((x) => scaling.toArenaPos(x));
-
       const position = Vector.centroid(...vertices);
-      const radius = Math.round(Vector.radius(...vertices));
+      
+      // Scale the radius to arena units
+      const radius = scaling.toArenaUnits(new Vector(radiusCanvas, radiusCanvas)).x;
       const color = ctx.fillStyle as EntityColor;
 
       let type = EntityType.UNKNOWN;
