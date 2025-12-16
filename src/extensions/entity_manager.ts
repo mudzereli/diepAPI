@@ -129,53 +129,29 @@ class EntityManager extends Extension {
 
   #triangleHook(): void {
     CanvasKit.hookPolygon(3, (vertices, ctx) => {
-      const side1 = Math.round(Vector.distance(vertices[0], vertices[1]));
-      const side2 = Math.round(Vector.distance(vertices[0], vertices[2]));
-      const side3 = Math.round(Vector.distance(vertices[1], vertices[2]));
-      //ignore minimap arrow
-      if (side1 !== side2 || side2 !== side3) return;
-      //ignore leader arrow
-      if ('#000000' === ctx.fillStyle) return;
+      const rawColor = ctx.fillStyle as string;
+
+      // Ignore UI / minimap junk
+      if (rawColor === '#000000') return;
 
       vertices = vertices.map((x) => scaling.toArenaPos(x));
-
       const position = Vector.centroid(...vertices);
-      const radius = Math.round(Vector.radius(...vertices));
-      const color = ctx.fillStyle as EntityColor;
 
       let type = EntityType.UNKNOWN;
-      switch (radius) {
-        case 23:
-          //battleship drone
-          if (TeamColors.includes(color)) type = EntityType.Drone;
-          break;
-        case 30:
-          //base drone
-          if (TeamColors.includes(color)) type = EntityType.Drone;
-          break;
-        case 35:
-          //small crasher
-          if (EntityColor.Crasher === color) type = EntityType.Crasher;
-          break;
-        case 40:
-        case 41:
-        case 42:
-        case 43:
-        case 44:
-        case 45:
-        case 46:
-          //overseer/overlord drone
-          if (TeamColors.includes(color)) type = EntityType.Drone;
-          break;
-        case 55:
-          //big crasher
-          if (EntityColor.Crasher === color) type = EntityType.Crasher;
-          //triangle
-          if (EntityColor.Triangle === color) type = EntityType.Triangle;
-          break;
+
+      if (rawColor === EntityColor.Triangle) {
+        type = EntityType.Triangle;
+      } else if (rawColor === EntityColor.Crasher) {
+        type = EntityType.Crasher;
+      } else if (TeamColors.includes(rawColor as EntityColor)) {
+        type = EntityType.Drone;
       }
 
-      this.#add(type, position, { color, radius, source: 'triangle' });
+      this.#add(type, position, {
+        color: rawColor as EntityColor,
+        radius: Vector.radius(...vertices),
+        source: 'triangle',
+      });
     });
   }
 
@@ -207,23 +183,27 @@ class EntityManager extends Extension {
 
   #pentagonHook(): void {
     CanvasKit.hookPolygon(5, (vertices, ctx) => {
-      vertices = vertices.map((x) => scaling.toArenaPos(x));
+      const rawColor = ctx.fillStyle as string;
 
+      // Ignore UI / minimap junk
+      if (rawColor === '#000000') return;
+
+      vertices = vertices.map((x) => scaling.toArenaPos(x));
       const position = Vector.centroid(...vertices);
-      const radius = Math.round(Vector.radius(...vertices));
-      const color = ctx.fillStyle as EntityColor;
 
       let type = EntityType.UNKNOWN;
-      switch (radius) {
-        case 75:
-          if (EntityColor.Pentagon === color) type = EntityType.Pentagon;
-          break;
-        case 200:
-          if (EntityColor.AlphaPentagon === color) type = EntityType.AlphaPentagon;
-          break;
+
+      if (rawColor === EntityColor.Pentagon) {
+        type = EntityType.Pentagon;
+      } else if (rawColor === EntityColor.AlphaPentagon) {
+        type = EntityType.AlphaPentagon;
       }
 
-      this.#add(type, position, { color, radius, source: 'pentagon' });
+      this.#add(type, position, {
+        color: rawColor as EntityColor,
+        radius: Vector.radius(...vertices), // informational only
+        source: 'pentagon',
+      });
     });
   }
 
