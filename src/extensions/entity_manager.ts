@@ -61,8 +61,9 @@ class EntityManager extends Extension {
   #add(
     type: EntityType,
     position: Vector,
-    extras: Partial<Entity['extras']>,
-    source?: 'triangle' | 'square' | 'pentagon' | 'hexagon' | 'circle'
+    extras: Partial<Entity['extras']> & {
+      source?: 'triangle' | 'square' | 'pentagon' | 'hexagon' | 'circle';
+    }
   ): void {
     let entity = this.#findEntity(type, position);
 
@@ -72,12 +73,13 @@ class EntityManager extends Extension {
       entity = new Entity(type, parent, {
         id: random_id(),
         timestamp: performance.now(),
-        source,
         ...extras,
       });
     }
-    //TODO: remove radius from extras
-    entity.extras.radius = extras.radius;
+    entity.extras = {
+      ...entity.extras,
+      ...extras,
+    };
 
     entity.updatePos(position);
     this.#entities.push(entity);
@@ -167,7 +169,7 @@ class EntityManager extends Extension {
           break;
       }
 
-      this.#add(type, position, { color, radius }, 'triangle');
+      this.#add(type, position, { color, radius, source: 'triangle' });
     });
   }
 
@@ -189,7 +191,7 @@ class EntityManager extends Extension {
           break;
       }
 
-      this.#add(type, position, { color, radius }, 'square');
+      this.#add(type, position, { color, radius, source: 'square' });
     });
   }
 
@@ -211,7 +213,7 @@ class EntityManager extends Extension {
           break;
       }
 
-      this.#add(type, position, { color, radius }, 'pentagon');
+      this.#add(type, position, { color, radius, source: 'pentagon' });
     });
   }
 
@@ -230,7 +232,7 @@ class EntityManager extends Extension {
           break;
       }
 
-      this.#add(type, position, { color, radius }, 'hexagon');
+      this.#add(type, position, { color, radius, source: 'hexagon' });
     });
   }
 
@@ -255,7 +257,7 @@ class EntityManager extends Extension {
       this.#add(type, position, {
         color,
         radius,
-      }, 'circle');
+        source: 'circle'});
     };
 
     //Sequence: beginPath -> arc -> fill -> beginPath -> arc -> fill -> arc
