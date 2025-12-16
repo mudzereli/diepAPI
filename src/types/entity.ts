@@ -51,6 +51,7 @@ export class Entity extends Movement {
       timestamp: number;
       color?: string;
       radius?: number;
+      source?: 'triangle' | 'square' | 'pentagon' | 'hexagon' | 'circle';
     },
   ) {
     super();
