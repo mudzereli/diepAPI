@@ -216,11 +216,7 @@ class EntityManager extends Extension {
       const color = ctx.fillStyle as EntityColor;
 
       let type = EntityType.UNKNOWN;
-      switch (radius) {
-        case 100:
-          if (EntityColor.Hexagon === color) type = EntityType.Hexagon;
-          break;
-      }
+      if (EntityColor.Hexagon === color) type = EntityType.Hexagon;
 
       this.#add(type, position, { color, radius, source: 'hexagon' });
     });
