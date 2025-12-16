@@ -1456,19 +1456,25 @@ class EntityManager extends Extension {
      *
      * Will either find the entity in `#entitiesLastFrame` or create a new `Entity`.
      */
-    #add(type, position, extras, source) {
+    #add(type, position, extras) {
         let entity = this.#findEntity(type, position);
         if (!entity) {
             const parent = this.#findParent(type, position);
             entity = new Entity(type, parent, {
                 id: random_id(),
                 timestamp: performance.now(),
-                source,
-                ...extras,
             });
         }
-        //TODO: remove radius from extras
-        entity.extras.radius = extras.radius;
+        // ✅ mutate fields, do NOT reassign extras
+        if (extras.color !== undefined) {
+            entity.extras.color = extras.color;
+        }
+        if (extras.radius !== undefined) {
+            entity.extras.radius = extras.radius;
+        }
+        if (extras.source !== undefined) {
+            entity.extras.source = extras.source;
+        }
         entity.updatePos(position);
         this.#entities.push(entity);
     }
@@ -1554,7 +1560,7 @@ class EntityManager extends Extension {
                         type = EntityType.Triangle;
                     break;
             }
-            this.#add(type, position, { color, radius }, 'triangle');
+            this.#add(type, position, { color, radius, source: 'triangle' });
         });
     }
     #squareHook() {
@@ -1574,7 +1580,7 @@ class EntityManager extends Extension {
                         type = EntityType.Drone;
                     break;
             }
-            this.#add(type, position, { color, radius }, 'square');
+            this.#add(type, position, { color, radius, source: 'square' });
         });
     }
     #pentagonHook() {
@@ -1594,7 +1600,7 @@ class EntityManager extends Extension {
                         type = EntityType.AlphaPentagon;
                     break;
             }
-            this.#add(type, position, { color, radius }, 'pentagon');
+            this.#add(type, position, { color, radius, source: 'pentagon' });
         });
     }
     #hexagonHook() {
@@ -1610,7 +1616,7 @@ class EntityManager extends Extension {
                         type = EntityType.Hexagon;
                     break;
             }
-            this.#add(type, position, { color, radius }, 'hexagon');
+            this.#add(type, position, { color, radius, source: 'hexagon' });
         });
     }
     #playerHook() {
@@ -1631,7 +1637,8 @@ class EntityManager extends Extension {
             this.#add(type, position, {
                 color,
                 radius,
-            }, 'circle');
+                source: 'circle'
+            });
         };
         //Sequence: beginPath -> arc -> fill -> beginPath -> arc -> fill -> arc
         CanvasKit.hookCtx('beginPath', (target, thisArg, args) => {
