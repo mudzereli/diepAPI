@@ -58,7 +58,12 @@ class EntityManager extends Extension {
    *
    * Will either find the entity in `#entitiesLastFrame` or create a new `Entity`.
    */
-  #add(type: EntityType, position: Vector, extras: Partial<Entity['extras']>): void {
+  #add(
+    type: EntityType,
+    position: Vector,
+    extras: Partial<Entity['extras']>,
+    source?: 'triangle' | 'square' | 'pentagon' | 'hexagon' | 'circle'
+  ): void {
     let entity = this.#findEntity(type, position);
 
     if (!entity) {
@@ -67,6 +72,7 @@ class EntityManager extends Extension {
       entity = new Entity(type, parent, {
         id: random_id(),
         timestamp: performance.now(),
+        source,
         ...extras,
       });
     }
@@ -161,14 +167,13 @@ class EntityManager extends Extension {
           break;
       }
 
-      this.#add(type, position, { color, radius });
+      this.#add(type, position, { color, radius }, 'triangle');
     });
   }
 
   #squareHook(): void {
     CanvasKit.hookPolygon(4, (vertices, ctx) => {
       vertices = vertices.map((x) => scaling.toArenaPos(x));
-
       const position = Vector.centroid(...vertices);
       const radius = Math.round(Vector.radius(...vertices));
       const color = ctx.fillStyle as EntityColor;
@@ -184,7 +189,7 @@ class EntityManager extends Extension {
           break;
       }
 
-      this.#add(type, position, { color, radius });
+      this.#add(type, position, { color, radius }, 'square');
     });
   }
 
@@ -206,7 +211,7 @@ class EntityManager extends Extension {
           break;
       }
 
-      this.#add(type, position, { color, radius });
+      this.#add(type, position, { color, radius }, 'pentagon');
     });
   }
 
@@ -225,7 +230,7 @@ class EntityManager extends Extension {
           break;
       }
 
-      this.#add(type, position, { color, radius });
+      this.#add(type, position, { color, radius }, 'hexagon');
     });
   }
 
@@ -250,7 +255,7 @@ class EntityManager extends Extension {
       this.#add(type, position, {
         color,
         radius,
-      });
+      }, 'circle');
     };
 
     //Sequence: beginPath -> arc -> fill -> beginPath -> arc -> fill -> arc
