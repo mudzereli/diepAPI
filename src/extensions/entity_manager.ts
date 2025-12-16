@@ -73,13 +73,19 @@ class EntityManager extends Extension {
       entity = new Entity(type, parent, {
         id: random_id(),
         timestamp: performance.now(),
-        ...extras,
       });
     }
-    entity.extras = {
-      ...entity.extras,
-      ...extras,
-    };
+
+    // ✅ mutate fields, do NOT reassign extras
+    if (extras.color !== undefined) {
+      entity.extras.color = extras.color;
+    }
+    if (extras.radius !== undefined) {
+      entity.extras.radius = extras.radius;
+    }
+    if (extras.source !== undefined) {
+      entity.extras.source = extras.source;
+    }
 
     entity.updatePos(position);
     this.#entities.push(entity);
