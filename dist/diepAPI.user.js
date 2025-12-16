@@ -1565,17 +1565,19 @@ class EntityManager extends Extension {
     }
     #squareHook() {
         CanvasKit.hookPolygon(4, (vertices, ctx) => {
+            // measure in canvas space
+            const radiusCanvas = Math.round(Vector.radius(...vertices));
+            // convert vertices to arena space
             vertices = vertices.map((x) => scaling.toArenaPos(x));
             const position = Vector.centroid(...vertices);
-            const radius = Math.round(Vector.radius(...vertices));
+            // scale radius properly
+            const radius = scaling.toArenaUnits(new Vector(radiusCanvas, radiusCanvas)).x;
             const color = ctx.fillStyle;
             let type = EntityType.UNKNOWN;
-            switch (radius) {
+            switch (radiusCanvas) {
                 case 55:
-                    //square
                     if (EntityColor.Square === color)
                         type = EntityType.Square;
-                    //necromancer drone
                     if (TeamColors.includes(color) || EntityColor.NecromancerDrone === color)
                         type = EntityType.Drone;
                     break;
