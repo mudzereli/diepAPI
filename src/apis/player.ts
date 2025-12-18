@@ -272,10 +272,10 @@ class Player extends EventEmitter {
   }
 
   lookAt(arenaPos: Vector): void {
-    const position = scaling.toCanvasPos(arenaPos);
-    input.mouse(position.x, position.y);
-
-    this.#onmousemove({ clientX: position.x, clientY: position.y } as MouseEvent);
+    const canvasPos = scaling.toCanvasPos(arenaPos);
+    const screenPos = scaling.canvasToScreen(canvasPos);
+    input.mouse(screenPos.x, screenPos.y);
+    this.#onmousemove({ clientX: screenPos.x, clientY: screenPos.y } as MouseEvent);
   }
 
   #onmousemove(e: MouseEvent): void {
