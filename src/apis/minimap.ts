@@ -73,40 +73,44 @@ class Minimap {
     CanvasKit.overrideCtx('fillRect', (target, thisArg, args) => {
       const transform = thisArg.getTransform();
 
-      if (Math.round(thisArg.globalAlpha * 10) / 10 !== 0.1) {
-        Reflect.apply(target, thisArg, args);
-        return;
-      }
-      if (
-        Math.abs(transform.a / transform.d - _window.innerWidth / _window.innerHeight) >
-        (_window.innerWidth / _window.innerHeight) * 0.000_05
-      ) {
-        Reflect.apply(target, thisArg, args);
-        return;
+      // 1) Alpha range (not equality)
+      const a = thisArg.globalAlpha;
+      if (a < 0.05 || a > 0.2) {
+        return Reflect.apply(target, thisArg, args);
       }
 
+      // 2) Aspect ratio (looser tolerance)
+      const arWin = _window.innerWidth / _window.innerHeight;
+      const arRect = transform.a / transform.d;
+
+      if (Math.abs(arRect - arWin) > arWin * 0.002) {
+        return Reflect.apply(target, thisArg, args);
+      }
+
+      // ACCEPTED
       this.#viewportDim = new Vector(transform.a, transform.d);
       this.#viewportPos = new Vector(transform.e, transform.f);
 
       if (this.#drawViewport) {
-        Reflect.apply(target, thisArg, args);
-        return;
+        return Reflect.apply(target, thisArg, args);
       }
     });
   }
 
   #arrowHook() {
-    CanvasKit.hookPolygon(3, (vertices, ctx) => {
-      const side1 = Math.round(Vector.distance(vertices[0], vertices[1]));
-      const side2 = Math.round(Vector.distance(vertices[0], vertices[2]));
-      const side3 = Math.round(Vector.distance(vertices[1], vertices[2]));
-      if (side1 === side2 && side2 === side3) return;
-
+    CanvasKit.hookPolygon(3, (vertices) => {
       const centroid = Vector.centroid(...vertices);
-      const arrowPos = Vector.subtract(centroid, this.#minimapPos);
-      const position = Vector.divide(arrowPos, this.#minimapDim);
 
-      this.#arrowPos = position;
+      // Reject triangles not inside minimap bounds
+      if (
+        centroid.x < this.#minimapPos.x ||
+        centroid.y < this.#minimapPos.y ||
+        centroid.x > this.#minimapPos.x + this.#minimapDim.x ||
+        centroid.y > this.#minimapPos.y + this.#minimapDim.y
+      ) return;
+
+      const rel = Vector.subtract(centroid, this.#minimapPos);
+      this.#arrowPos = Vector.divide(rel, this.#minimapDim);
     });
   }
 }
