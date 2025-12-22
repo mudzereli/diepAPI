@@ -147,7 +147,7 @@ class EntityManager extends Extension {
     if (extras.radiusRaw !== undefined) (entity.extras as any).radiusRaw = extras.radiusRaw;
     if (extras.source !== undefined) entity.extras.source = extras.source as any;
 
-    entity.updatePos(scaling.toArenaPos(position));
+    entity.updatePos(position);
     this.#entities.push(entity);
   }
 
