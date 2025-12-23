@@ -8,7 +8,8 @@ type RenderingContext =
   | CanvasRenderingContext2D
   | OffscreenCanvasRenderingContext2D;
 
-// --- canonical radii ---
+/* ---------------- Canonical Radii ---------------- */
+const FINDENTITY_TOLERANCE = 84;
 const CANON = {
   DroneBattle: 23,
   DroneBase:   30,
@@ -31,29 +32,27 @@ class RadiusNormalizer {
   private factor = 1;
   private readonly max = 30;
 
-  apply(raw: number): number {
+  apply(raw: number) {
     return raw * this.factor;
   }
 
   addAnchor(observedRaw: number, expectedCanon: number) {
     if (!Number.isFinite(observedRaw) || observedRaw <= 0) return;
-    const f = expectedCanon / observedRaw;
-    this.samples.push(f);
+    this.samples.push(expectedCanon / observedRaw);
     if (this.samples.length > this.max) this.samples.shift();
 
     const s = [...this.samples].sort((a, b) => a - b);
-    const m = s.length
-      ? s.length % 2
+    const m =
+      s.length % 2
         ? s[(s.length - 1) / 2]
-        : (s[s.length / 2 - 1] + s[s.length / 2]) / 2
-      : 1;
+        : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
 
     this.factor = this.factor * 0.8 + m * 0.2;
   }
 
-  anchorIfClose(observedRaw: number, expectedCanon: number, tol = 5) {
-    if (Math.abs(this.apply(observedRaw) - expectedCanon) <= tol) {
-      this.addAnchor(observedRaw, expectedCanon);
+  anchorIfClose(raw: number, canon: number, tol = 5) {
+    if (Math.abs(this.apply(raw) - canon) <= tol) {
+      this.addAnchor(raw, canon);
     }
   }
 }
@@ -82,69 +81,13 @@ class EntityManager extends Extension {
     });
   }
 
-  get entities(): Entity[] {
+  get entities() {
     return this.#entities;
   }
 
-  /* ---------------- Player Detection ---------------- */
+  /* ---------------- Identity (POSITION ONLY) ---------------- */
 
-  getPlayer(): Entity | undefined {
-    if (this.#lastGoodSelf) {
-      if (Vector.distance(this.#lastGoodSelf.position, camera.position) <= 160) {
-        return this.#lastGoodSelf;
-      }
-    }
-
-    let best: Entity | undefined;
-    let bestRadius = -Infinity;
-
-    for (const e of this.#entities) {
-      if (e.extras?.source !== 'circle') continue;
-      const d = Vector.distance(e.position, camera.position);
-      if (d > 128) continue;
-
-      const r = e.extras?.radius ?? 0;
-      if (r > bestRadius) {
-        bestRadius = r;
-        best = e;
-      }
-    }
-
-    if (best) this.#lastGoodSelf = best;
-    return best;
-  }
-
-  /* ---------------- Entity Add / Match ---------------- */
-
-  #add(
-    type: EntityType,
-    position: Vector,
-    extras: Partial<Entity['extras']> & { radiusRaw?: number; source?: string },
-  ) {
-    let entity = this.#findEntity(type, position);
-
-    if (!entity) {
-      entity = new Entity(type, this.#findParent(type, position), {
-        id: random_id(),
-        timestamp: performance.now(),
-      } as any);
-    }
-
-    if (extras.color !== undefined) entity.extras.color = extras.color as any;
-    if (extras.radius !== undefined) entity.extras.radius = extras.radius;
-    if (extras.radiusRaw !== undefined) (entity.extras as any).radiusRaw = extras.radiusRaw;
-    if (extras.source !== undefined) entity.extras.source = extras.source as any;
-    entity.updatePos(position);
-    this.#entities.push(entity);
-  }
-
-  #findParent(type: EntityType, position: Vector) {
-    if (type === EntityType.Bullet) {
-      return this.#findEntity(EntityType.Player, position, 300);
-    }
-  }
-
-  #findEntity(_type: EntityType, position: Vector, tol = 42) {
+  #findEntity(position: Vector, tol = FINDENTITY_TOLERANCE): Entity | undefined {
     let best: Entity | undefined;
     let bestD = Infinity;
 
@@ -159,11 +102,71 @@ class EntityManager extends Extension {
     return bestD <= tol ? best : undefined;
   }
 
-  /* ---------------- Polygon Hook Helper ---------------- */
+  #findParent(type: EntityType, position: Vector) {
+    if (type === EntityType.Bullet) {
+      return this.#findEntity(position, 300);
+    }
+  }
+
+  #add(
+    type: EntityType,
+    position: Vector,
+    extras: Partial<Entity['extras']> & { radiusRaw?: number; source?: string },
+  ) {
+    let entity = this.#findEntity(position);
+
+    // 🔒 Identity is position-based ONLY
+    // 🔒 Type is fixed at creation time
+    if (!entity) {
+      entity = new Entity(type, this.#findParent(type, position), {
+        id: random_id(),
+        timestamp: performance.now(),
+      } as any);
+    }
+
+    // Only mutable state lives in extras + position
+    if (extras.color !== undefined) entity.extras.color = extras.color as any;
+    if (extras.radius !== undefined) entity.extras.radius = extras.radius;
+    if (extras.radiusRaw !== undefined) (entity.extras as any).radiusRaw = extras.radiusRaw;
+    if (extras.source !== undefined) entity.extras.source = extras.source as any;
+
+    entity.updatePos(position);
+    this.#entities.push(entity);
+  }
+
+  /* ---------------- Player Detection ---------------- */
+
+  getPlayer(): Entity | undefined {
+    if (this.#lastGoodSelf) {
+      if (Vector.distance(this.#lastGoodSelf.position, camera.position) <= 160) {
+        return this.#lastGoodSelf;
+      }
+    }
+
+    let best: Entity | undefined;
+    let bestR = -Infinity;
+
+    for (const e of this.#entities) {
+      if (e.extras?.source !== 'circle') continue;
+      const d = Vector.distance(e.position, camera.position);
+      if (d > 128) continue;
+
+      const r = e.extras.radius ?? 0;
+      if (r > bestR) {
+        bestR = r;
+        best = e;
+      }
+    }
+
+    if (best) this.#lastGoodSelf = best;
+    return best;
+  }
+
+  /* ---------------- Polygon Helper ---------------- */
 
   #polygonHook(
     sides: number,
-    handler: (ctx: {
+    handler: (p: {
       ctx: RenderingContext;
       position: Vector;
       raw: number;
@@ -172,7 +175,7 @@ class EntityManager extends Extension {
     }) => void,
   ) {
     CanvasKit.hookPolygon(sides, (verts, ctx) => {
-      const vertices = verts.map(v => scaling.toArenaPos(v));
+      const vertices = verts;
       const position = Vector.centroid(...vertices);
       const raw = Vector.radius(...vertices);
       const norm = Math.round(radNorm.apply(raw));
@@ -193,18 +196,22 @@ class EntityManager extends Extension {
       if (ctx.fillStyle === '#000000') return;
       const color = ctx.fillStyle as EntityColor;
 
-      if (color === EntityColor.Crasher) {
-        radNorm.addAnchor(raw, norm < 45 ? CANON.CrasherS : CANON.CrasherL);
-      } else if (color === EntityColor.Triangle) {
-        radNorm.anchorIfClose(raw, CANON.Triangle, 6);
-      } else if (TeamColors.includes(color)) {
-        radNorm.anchorIfClose(raw, CANON.DroneOver, 6);
-      }
-
       let type = EntityType.UNKNOWN;
-      if (color === EntityColor.Crasher) type = EntityType.Crasher;
-      else if (TeamColors.includes(color)) type = EntityType.Drone;
-      else if (color === EntityColor.Triangle) type = EntityType.Triangle;
+
+      if (color === EntityColor.Crasher) {
+        if (near(norm, CANON.CrasherS, 4) || near(norm, CANON.CrasherL, 6)) {
+          type = EntityType.Crasher;
+        }
+      } else if (color === EntityColor.Triangle && near(norm, CANON.Triangle, 6)) {
+        type = EntityType.Triangle;
+      } else if (
+        TeamColors.includes(color) &&
+        (near(norm, CANON.DroneBattle, 3) ||
+         near(norm, CANON.DroneBase, 4) ||
+         near(norm, CANON.DroneOver, 6))
+      ) {
+        type = EntityType.Drone;
+      }
 
       this.#add(type, position, { color, radius: norm, radiusRaw: raw, source: 'triangle' });
     });
@@ -215,12 +222,16 @@ class EntityManager extends Extension {
       const color = ctx.fillStyle as EntityColor;
       if (color === EntityColor.Square) radNorm.addAnchor(raw, CANON.Square);
 
-      const type =
-        color === EntityColor.Square
-          ? EntityType.Square
-          : TeamColors.includes(color)
-          ? EntityType.Drone
-          : EntityType.UNKNOWN;
+      let type = EntityType.UNKNOWN;
+
+      if (color === EntityColor.Square && near(norm, CANON.Square, 5)) {
+        type = EntityType.Square;
+      } else if (
+        (TeamColors.includes(color) || color === EntityColor.NecromancerDrone) &&
+        near(norm, CANON.Square, 7)
+      ) {
+        type = EntityType.Drone;
+      }
 
       this.#add(type, position, { color, radius: norm, radiusRaw: raw, source: 'square' });
     });
@@ -228,21 +239,23 @@ class EntityManager extends Extension {
 
   #pentagonHook() {
     this.#polygonHook(5, ({ ctx, position, raw, norm }) => {
-      const color = String(ctx.fillStyle);
-      radNorm.addAnchor(raw,
+      radNorm.addAnchor(
+        raw,
         Math.abs(norm - CANON.Alpha) < Math.abs(norm - CANON.Pentagon)
           ? CANON.Alpha
-          : CANON.Pentagon
+          : CANON.Pentagon,
       );
 
-      const type =
-        near(norm, CANON.Alpha, 8)
-          ? EntityType.AlphaPentagon
-          : near(norm, CANON.Pentagon, 6)
-          ? EntityType.Pentagon
-          : EntityType.UNKNOWN;
+      let type = EntityType.UNKNOWN;
+      if (near(norm, CANON.Alpha, 8)) type = EntityType.AlphaPentagon;
+      else if (near(norm, CANON.Pentagon, 6)) type = EntityType.Pentagon;
 
-      this.#add(type, position, { color, radius: norm, radiusRaw: raw, source: 'pentagon' });
+      this.#add(type, position, {
+        color: String(ctx.fillStyle),
+        radius: norm,
+        radiusRaw: raw,
+        source: 'pentagon',
+      });
     });
   }
 
@@ -277,7 +290,11 @@ class EntityManager extends Extension {
       this.#add(type, pos, { color, radius: norm, radiusRaw: raw, source: 'circle' });
     };
 
-    CanvasKit.hookCtx('beginPath', () => index = index === 3 ? 4 : 1);
+    CanvasKit.hookCtx('beginPath', () => {
+      if (index !== 3) { index = 1; return; }
+      if (index === 3) { index++; return; }
+      index = 0;
+    });
     CanvasKit.hookCtx('arc', (_t, ctx) => {
       if (index === 1) {
         const tr = ctx.getTransform();
