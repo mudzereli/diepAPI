@@ -3,13 +3,38 @@ import { CanvasKit, Vector } from '../core';
 import { Entity, EntityColor, EntityType, TeamColors } from '../types/entity';
 import { Extension } from './extension';
 
+/**
+ * Generates a short random ID string for newly created entities.
+ * NOTE: IDs are NOT stable across reloads — only within runtime.
+ */
 const random_id = () => Math.random().toString(36).slice(2, 5);
+
+/**
+ * CanvasKit can hook both onscreen and offscreen canvas contexts,
+ * so we accept both here.
+ */
 type RenderingContext =
   | CanvasRenderingContext2D
   | OffscreenCanvasRenderingContext2D;
 
-/* ---------------- Canonical Radii ---------------- */
+/* ============================================================
+ *  CANONICAL RADII & TUNABLE CONSTANTS
+ * ============================================================
+ */
+
+/**
+ * Max distance (in arena units) an entity can move between frames
+ * and still be considered "the same entity".
+ *
+ * Too small → entities flicker / lose identity
+ * Too large → nearby entities may merge identities
+ */
 const FINDENTITY_TOLERANCE = 84;
+
+/**
+ * Canonical (historical) entity radii in arena units.
+ * Used only for classification heuristics — NOT identity.
+ */
 const CANON = {
   DroneBattle: 23,
   DroneBase:   30,
@@ -23,33 +48,64 @@ const CANON = {
   Alpha:       200,
 };
 
-const near = (n: number, t: number, tol = 3) => Math.abs(n - t) <= tol;
+/**
+ * Helper: checks whether two numbers are approximately equal.
+ * Used heavily for radius-based classification.
+ */
+const near = (n: number, t: number, tol = 3) =>
+  Math.abs(n - t) <= tol;
 
-/* ---------------- Radius Normalizer ---------------- */
+/* ============================================================
+ *  RADIUS NORMALIZER
+ * ============================================================
+ *
+ * Purpose:
+ * - Canvas scale / FOV changes distort raw radii
+ * - This class learns a scale factor that maps raw → canonical
+ *
+ * IMPORTANT:
+ * - Radius normalization affects classification ONLY
+ * - Identity is NEVER radius-based
+ */
 
 class RadiusNormalizer {
-  private samples: number[] = [];
-  private factor = 1;
-  private readonly max = 30;
+  private samples: number[] = [];   // recent scale factor samples
+  private factor = 1;               // current scale factor
+  private readonly max = 15;         // max samples kept
 
+  /**
+   * Converts a raw measured radius into a normalized radius.
+   */
   apply(raw: number) {
     return raw * this.factor;
   }
 
+  /**
+   * Adds a trusted (raw → canonical) measurement.
+   * Uses a rolling median + EMA to remain stable.
+   */
   addAnchor(observedRaw: number, expectedCanon: number) {
     if (!Number.isFinite(observedRaw) || observedRaw <= 0) return;
+
+    // store scale ratio
     this.samples.push(expectedCanon / observedRaw);
     if (this.samples.length > this.max) this.samples.shift();
 
+    // robust median
     const s = [...this.samples].sort((a, b) => a - b);
     const m =
       s.length % 2
         ? s[(s.length - 1) / 2]
         : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
 
+    // smooth update (EMA)
     this.factor = this.factor * 0.8 + m * 0.2;
   }
 
+  /**
+   * Adds an anchor only if current estimate is already close.
+   * Prevents bad anchors from corrupting scale.
+   */
   anchorIfClose(raw: number, canon: number, tol = 5) {
     if (Math.abs(this.apply(raw) - canon) <= tol) {
       this.addAnchor(raw, canon);
@@ -59,20 +115,48 @@ class RadiusNormalizer {
 
 const radNorm = new RadiusNormalizer();
 
-/* ---------------- Entity Manager ---------------- */
+/* ============================================================
+ *  ENTITY MANAGER
+ * ============================================================
+ *
+ * Core rules of this system:
+ *
+ * 1. Identity is POSITION-ONLY
+ * 2. Type is FIXED AT CREATION
+ * 3. Missing detection for 1 frame = entity disappears
+ * 4. Extras are mutable, entity.type is not
+ */
 
 class EntityManager extends Extension {
+  /**
+   * Entities detected THIS frame
+   */
   #entities: Entity[] = [];
+
+  /**
+   * Entities detected LAST frame
+   * Used exclusively for identity matching
+   */
   #entitiesLastFrame: Entity[] = [];
+
+  /**
+   * Cached "best guess" of player entity
+   */
   #lastGoodSelf?: Entity;
 
   constructor() {
     super(() => {
+      /**
+       * At end of every frame:
+       * - current entities become "last frame"
+       * - current list is cleared
+       */
       game.on('frame_end', () => {
         this.#entitiesLastFrame = this.#entities;
         this.#entities = [];
       });
 
+      // Register all draw hooks
       this.#triangleHook();
       this.#squareHook();
       this.#pentagonHook();
@@ -81,12 +165,27 @@ class EntityManager extends Extension {
     });
   }
 
+  /**
+   * Public accessor for entities detected THIS frame
+   */
   get entities() {
     return this.#entities;
   }
 
-  /* ---------------- Identity (POSITION ONLY) ---------------- */
+  /* ============================================================
+   *  IDENTITY MATCHING (POSITION ONLY)
+   * ============================================================
+   */
 
+  /**
+   * Finds the closest entity from the previous frame.
+   *
+   * This is the ONLY identity mechanism.
+   * - type
+   * - color
+   * - radius
+   * do NOT matter here.
+   */
   #findEntity(position: Vector, tol = FINDENTITY_TOLERANCE): Entity | undefined {
     let best: Entity | undefined;
     let bestD = Infinity;
@@ -102,12 +201,25 @@ class EntityManager extends Extension {
     return bestD <= tol ? best : undefined;
   }
 
+  /**
+   * Bullets attempt to parent to nearby players.
+   * This is cosmetic / relational, not identity.
+   */
   #findParent(type: EntityType, position: Vector) {
     if (type === EntityType.Bullet) {
       return this.#findEntity(position, 300);
     }
   }
 
+  /**
+   * Adds or updates an entity for THIS frame.
+   *
+   * - If position matches previous frame → reuse entity
+   * - Otherwise → create a new one
+   *
+   * NOTE:
+   * entity.type is NEVER modified after creation.
+   */
   #add(
     type: EntityType,
     position: Vector,
@@ -115,8 +227,7 @@ class EntityManager extends Extension {
   ) {
     let entity = this.#findEntity(position);
 
-    // 🔒 Identity is position-based ONLY
-    // 🔒 Type is fixed at creation time
+    // Create entity ONLY if identity not found
     if (!entity) {
       entity = new Entity(type, this.#findParent(type, position), {
         id: random_id(),
@@ -124,17 +235,25 @@ class EntityManager extends Extension {
       } as any);
     }
 
-    // Only mutable state lives in extras + position
+    // Mutable metadata only
     if (extras.color !== undefined) entity.extras.color = extras.color as any;
     if (extras.radius !== undefined) entity.extras.radius = extras.radius;
     if (extras.radiusRaw !== undefined) (entity.extras as any).radiusRaw = extras.radiusRaw;
     if (extras.source !== undefined) entity.extras.source = extras.source as any;
 
+    // Update position every frame
     entity.updatePos(position);
+
     this.#entities.push(entity);
   }
 
-  /* ---------------- Player Detection ---------------- */
+  /* ============================================================
+   *  PLAYER DETECTION
+   * ============================================================
+   *
+   * Chooses the largest nearby circle entity.
+   * Cached to avoid flicker.
+   */
 
   getPlayer(): Entity | undefined {
     if (this.#lastGoodSelf) {
@@ -162,7 +281,15 @@ class EntityManager extends Extension {
     return best;
   }
 
-  /* ---------------- Polygon Helper ---------------- */
+  /* ============================================================
+   *  POLYGON HOOK INFRASTRUCTURE
+   * ============================================================
+   *
+   * Shared logic for all polygon types:
+   * - Receives raw canvas vertices
+   * - Computes centroid + radius
+   * - Hands off to shape-specific handler
+   */
 
   #polygonHook(
     sides: number,
@@ -175,27 +302,43 @@ class EntityManager extends Extension {
     }) => void,
   ) {
     CanvasKit.hookPolygon(sides, (verts, ctx) => {
-      const vertices = verts;
+      const vertices = verts.map(v => scaling.toArenaPos(v)); // canvas-space vertices
       const position = Vector.centroid(...vertices);
       const raw = Vector.radius(...vertices);
       const norm = Math.round(radNorm.apply(raw));
+
       handler({ ctx, position, raw, norm, vertices });
     });
   }
 
-  /* ---------------- Polygon Hooks ---------------- */
+  /* ============================================================
+   *  SHAPE-SPECIFIC HOOKS
+   * ============================================================
+   */
 
+  /**
+   * TRIANGLES:
+   * - Crasher
+   * - Triangle
+   * - Drones
+   *
+   * NOTE:
+   * Equilateral check is VERY strict and can cause flicker.
+   */
   #triangleHook() {
     this.#polygonHook(3, ({ ctx, position, raw, norm, vertices }) => {
       const [a, b, c] = vertices;
+
+      // Reject non-equilateral triangles
       if (
         Math.round(Vector.distance(a, b)) !== Math.round(Vector.distance(a, c)) ||
         Math.round(Vector.distance(a, b)) !== Math.round(Vector.distance(b, c))
       ) return;
 
+      // Ignore leader arrows
       if (ctx.fillStyle === '#000000') return;
-      const color = ctx.fillStyle as EntityColor;
 
+      const color = ctx.fillStyle as EntityColor;
       let type = EntityType.UNKNOWN;
 
       if (color === EntityColor.Crasher) {
@@ -213,17 +356,22 @@ class EntityManager extends Extension {
         type = EntityType.Drone;
       }
 
-      this.#add(type, position, { color, radius: norm, radiusRaw: raw, source: 'triangle' });
+      this.#add(type, position, {
+        color,
+        radius: norm,
+        radiusRaw: raw,
+        source: 'triangle',
+      });
     });
   }
 
+  /* SQUARES */
   #squareHook() {
     this.#polygonHook(4, ({ ctx, position, raw, norm }) => {
       const color = ctx.fillStyle as EntityColor;
       if (color === EntityColor.Square) radNorm.addAnchor(raw, CANON.Square);
 
       let type = EntityType.UNKNOWN;
-
       if (color === EntityColor.Square && near(norm, CANON.Square, 5)) {
         type = EntityType.Square;
       } else if (
@@ -233,10 +381,16 @@ class EntityManager extends Extension {
         type = EntityType.Drone;
       }
 
-      this.#add(type, position, { color, radius: norm, radiusRaw: raw, source: 'square' });
+      this.#add(type, position, {
+        color,
+        radius: norm,
+        radiusRaw: raw,
+        source: 'square',
+      });
     });
   }
 
+  /* PENTAGONS / ALPHA */
   #pentagonHook() {
     this.#polygonHook(5, ({ ctx, position, raw, norm }) => {
       radNorm.addAnchor(
@@ -259,6 +413,7 @@ class EntityManager extends Extension {
     });
   }
 
+  /* HEXAGONS */
   #hexagonHook() {
     this.#polygonHook(6, ({ ctx, position, raw, norm }) => {
       const color = ctx.fillStyle as EntityColor;
@@ -269,11 +424,19 @@ class EntityManager extends Extension {
           ? EntityType.Hexagon
           : EntityType.UNKNOWN;
 
-      this.#add(type, position, { color, radius: norm, radiusRaw: raw, source: 'hexagon' });
+      this.#add(type, position, {
+        color,
+        radius: norm,
+        radiusRaw: raw,
+        source: 'hexagon',
+      });
     });
   }
 
-  /* ---------------- Player Hook ---------------- */
+  /* ============================================================
+   *  PLAYER / BULLET CIRCLE HOOK
+   * ============================================================
+   */
 
   #playerHook() {
     let index = 0;
@@ -281,20 +444,30 @@ class EntityManager extends Extension {
     let radius = 0;
     let color = '';
 
+    /**
+     * Called when full arc + fill sequence completes.
+     */
     const onCircle = () => {
       const pos = scaling.toArenaPos(position);
       const raw = scaling.toArenaUnits(new Vector(radius, radius)).x;
       const norm = Math.round(radNorm.apply(raw));
       const type = norm > 53 ? EntityType.Player : EntityType.Bullet;
 
-      this.#add(type, pos, { color, radius: norm, radiusRaw: raw, source: 'circle' });
+      this.#add(type, pos, {
+        color,
+        radius: norm,
+        radiusRaw: raw,
+        source: 'circle',
+      });
     };
 
+    // Canvas state machine for arc → fill → arc
     CanvasKit.hookCtx('beginPath', () => {
       if (index !== 3) { index = 1; return; }
       if (index === 3) { index++; return; }
       index = 0;
     });
+
     CanvasKit.hookCtx('arc', (_t, ctx) => {
       if (index === 1) {
         const tr = ctx.getTransform();
@@ -309,6 +482,7 @@ class EntityManager extends Extension {
         index = 0;
       }
     });
+
     CanvasKit.hookCtx('fill', () => index++);
   }
 }
